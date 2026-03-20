@@ -1,5 +1,5 @@
 # squatch-post-importer
-Used in conjunction with squatch-post-exporter, a simple Wordpress importer that creates posts from a CSV
+Used in conjunction with [Squatch Post Exporter](https://github.com/RCNeil/squatch-post-exporter) and [Squatch Media Sync](https://github.com/RCNeil/squatch-media-sync), a simple Wordpress importer that creates posts from a CSV
 
 ## Overview
 
