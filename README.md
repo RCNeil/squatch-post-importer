@@ -32,7 +32,7 @@ The plugin provides a progress bar and logs details of imported posts, including
 
 ⚠️ Before importing posts, ensure:
 
-1. **Media Library must be copied over** with the same filenames and paths as in the CSV. This is required so the plugin can match featured images correctly.  
+1. **Media Library must be copied over** with the same filenames and paths as in the CSV. This is required so the plugin can match featured images correctly.  Use [Squatch Media Sync](https://github.com/RCNeil/squatch-media-sync) to populate the media content to the Media Library.
 2. **Authors must already exist** in the site with the correct username or email. Otherwise, posts will default to the currently logged-in user.  
 3. **Custom post meta and SEO mappings** must be updated in the plugin code to match your CSV headers and meta keys.
 4. The string replace feature will **only work if both Old URL and New URL are provided**. Leaving them blank will skip the replacement.
