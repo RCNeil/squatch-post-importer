@@ -151,6 +151,9 @@ add_action('admin_head', function() {
 			display: block;
 			min-width: 100px;
 		}
+		#footer-thankyou img {
+			height:28px;vertical-align:middle; 
+		}
 		.form-field {
 			display: flex;
 			gap: 18px;
