@@ -3,7 +3,7 @@
 Plugin Name: Squatch Post Importer
 Plugin URI: https://squatchcreative.com
 Description: Takes a CSV and turns them into posts
-Version: 1.005
+Version: 1.019
 Author: Squatch Creative
 Author URI: https://squatchcreative.com
 */
@@ -258,7 +258,7 @@ function squatch_post_importer_page() {
 						old_url: oldUrl,
 						new_url: newUrl,
 						post_type: postType,
-						_nonce: '<?php echo wp_create_nonce("post_import_nonce"); ?>'
+						_nonce: '<?php echo wp_create_nonce("squatch_import_nonce"); ?>'
 					},
 					success: function(res) {
 						if (res.success) {
@@ -305,7 +305,7 @@ add_action('wp_ajax_squatch_import_posts', function() {
 
 	global $wpdb;
 	
-	check_ajax_referer('post_export_nonce', '_nonce');
+	check_ajax_referer('squatch_import_nonce', '_nonce');
 
 	//$test_limit = 40;
 	$test_limit = null;
@@ -366,13 +366,14 @@ add_action('wp_ajax_squatch_import_posts', function() {
 		$content = $row['Content'] ?? '';
 
 		$user = get_user_by('login', $author_login);
-		if (!$user && is_email($author_email)) {
+		if(!$user && is_email($author_email)) {
 			$user = get_user_by('email', $author_email);
 		}
 		$author_id = $user ? $user->ID : get_current_user_id();
+		$author_login = $user ? $user->user_login : wp_get_current_user()->user_login;
 		$post_date = date('Y-m-d H:i:s', strtotime($date_raw));
 
-		if (!empty($content) && !empty($old_url) && !empty($new_url)) {
+		if(!empty($content) && !empty($old_url) && !empty($new_url)) {
 			$content = str_replace($old_url, $new_url, $content);
 		}
 		
@@ -404,72 +405,133 @@ add_action('wp_ajax_squatch_import_posts', function() {
 			continue;
 		}
 		
-		//SET TAXONOMIES
-		/*
-		$term_slug = 'your-slug';
-		$taxonomy_name = 'your_taxonomy';
-		wp_set_object_terms($post_id, $term_slug, $taxonomy_name, false);
-		*/
+		//SET/GET TAXONOMIES
+		$taxes = false;
+		foreach($headers as $column) {
+			if(!str_starts_with($column, 'TAXONOMY_SLUG:')) {
+				continue;
+			}
+			$taxonomy_name = substr($column, strlen('TAXONOMY_SLUG:'));
+			$term_slugs = $row[$column] ?? '';
+
+			$name_column = 'TAXONOMY_NAME:' . get_taxonomy($taxonomy_name)->label;
+			$term_names = $row[$name_column] ?? '';
+
+			if(empty($term_slugs)) {
+				continue;
+			}
+
+			$term_slugs = array_map('trim', explode(',', $term_slugs));
+			$term_names = array_map('trim', explode(',', $term_names));
+
+			foreach($term_slugs as $index => $term_slug) {
+				if(empty($term_slug)) {
+					continue;
+				}
+				$term_name = $term_names[$index] ?? $term_slug;
+				$existing_term = get_term_by('slug', $term_slug, $taxonomy_name);
+
+				if($existing_term) {
+					wp_update_term($existing_term->term_id, $taxonomy_name, [
+						'name' => $term_name,
+						'slug' => $term_slug
+					]);
+					$term_id = $existing_term->term_id;
+				} else {
+					$term = wp_insert_term($term_name, $taxonomy_name, [
+						'slug' => $term_slug
+					]);
+					$term_id = !is_wp_error($term) ? $term['term_id'] : false;
+				}
+
+				if($term_id) {
+					wp_set_object_terms($post_id, [$term_id], $taxonomy_name, true);
+					$taxes = true;
+				}
+			}
+		}
 			
 		//FEATURED IMAGE		
 		$image_url = $row['Featured Image URL'] ?? '';
-		$featured = find_featured_image($image_url);
+		$featured = find_attachment_by_url($image_url);
 		if ($featured['id']) {
 			set_post_thumbnail($post_id, $featured['id']);
 		}		
 		
 		
 		
-		// MAP YOUR YOAST SEO (OR OTHER SOURCE) HERE
-		$seo = false; 
-		$yoast_map = [];
-		/*
-		$yoast_map = [
-			'_yoast_wpseo_title'      			  => '_yoast_wpseo_title',
-			'_yoast_wpseo_metadesc'				  => '_yoast_wpseo_metadesc',
-			'_yoast_wpseo_focusk'   			  => '_yoast_wpseo_focuskw',
-			'_yoast_wpseo_canonical' 			  => '_yoast_wpseo_canonical',
-			'_yoast_wpseo_meta-robots-noindex'    => '_yoast_wpseo_meta-robots-noindex',
-			'_yoast_wpseo_meta-robots-nofollow'   => '_yoast_wpseo_meta-robots-nofollow',
-		];
-		*/
-		
-		foreach ($yoast_map as $csv_header => $meta_key) {
-			if (!empty($row[$csv_header])) {
-				$value = $row[$csv_header];
-
-				// For focus keyword, only take the first if multiple are provided
-				if ($csv_header === '_yoast_wpseo_focusk') {
-					$keywords = explode(',', $value);
-					$value = trim($keywords[0]);
-				}
-				update_post_meta($post_id, $meta_key, $value);
-				$seo = true;
-			}
-		}
-		
-		
-		
 		// MAP ANY META YOU WANT TO MAP HERE (ACF,CUSTOM FIELDS, ETC)
 		$custom_mapping = false;
-		$custom_map = []; 		
-		/*		
-		$custom_map = [
-			'custom_field_1'      => 'custom_field_1',
-			'custom_field_2'      => 'custom_field_2',
-			'custom_field_3'      => 'custom_field_3',
-			'custom_field_4'      => 'custom_field_4',
-			'custom_field_5'      => 'custom_field_5',
-		];		
-		*/
-				
-		foreach ($custom_map as $csv_header => $meta_key) {
-			if (!empty($row[$csv_header])) {
-				$value = $row[$csv_header];
-				update_post_meta($post_id, $meta_key, $value);
-				$custom_mapping = true;
+		foreach($headers as $index => $column) {
+			if(!str_starts_with($column, 'POSTMETA:')) {
+				continue;
 			}
-		}	
+
+			$meta_key = substr($column, strlen('POSTMETA:'));
+			$value = $row[$column] ?? '';
+
+			// Skip empty values.
+			if($value === '') {
+				continue;
+			}
+
+			// Determine whether this is an ACF field.
+			$field_key = '';
+			if(!str_starts_with($meta_key, '_')) {
+				$underscore_column = 'POSTMETA:_' . $meta_key;
+				$underscore_index = array_search($underscore_column, $headers);
+
+				if($underscore_index !== false) {
+					$field_key = $row[$headers[$underscore_index]] ?? '';
+				}
+			}
+			
+			//IT IS AN ACF FIELD
+			if(str_starts_with($field_key, 'field_')) {
+				$field = acf_get_field($field_key);
+
+				if($field) {
+					switch($field['type']) {
+						case 'image':
+							$image = find_attachment_by_url($value);
+							if($image['id']) {
+								$value = $image['id'];
+							} else {
+								$value = '';
+							}
+							break;
+
+						case 'gallery':
+							$urls = json_decode($value, true);
+							$attachment_ids = [];
+							if(is_array($urls)) {
+								foreach($urls as $url) {
+									$image = find_attachment_by_url($url);
+
+									if($image['id']) {
+										$attachment_ids[] = $image['id'];
+									}
+								}
+							}
+							$value = maybe_serialize($attachment_ids);
+							break;
+
+						case 'link':
+							$link = json_decode($value, true);
+							if(is_array($link)) {
+								if(!empty($link['url']) && !empty($old_url) && !empty($new_url)) {
+									$link['url'] = str_replace($old_url, $new_url, $link['url']);
+								}
+								$value = $link;
+							}
+							break;
+					}
+				}
+			}
+
+			update_post_meta($post_id, $meta_key, $value);
+			$custom_mapping = true;
+		}
 		
 		
 		
@@ -480,7 +542,7 @@ add_action('wp_ajax_squatch_import_posts', function() {
 		$output .= '<strong>Author:</strong> ' . esc_html($author_login) . ' (ID ' . $author_id . ') &bull; ';
 		$output .= '<strong>Date:</strong> ' . esc_html($post_date) . '<br>';
 		if($featured['id']) { $output .= '&bull; <strong>Featured Image:</strong> ' . esc_html($featured['filename']) . ' was attached with ID ' . intval($featured['id']); }
-		if ($seo) {	$output .= ' &bull; <strong>SEO UPDATED</strong>'; }
+		if ($taxes) {	$output .= ' &bull; <strong>TAXONOMIES UPDATED</strong>'; }
 		if ($custom_mapping) {	$output .= ' &bull; <strong>POST META MAPPED</strong>'; }
 		$output .= '<br /><br />';
 	}
@@ -499,29 +561,51 @@ add_action('wp_ajax_squatch_import_posts', function() {
 
 });
 
-function find_featured_image($image_url) {
+function find_attachment_by_url($image_url) {
 	if(empty($image_url)) {
 		return ['id' => false, 'filename' => ''];
 	}
+
 	global $wpdb;
 
-	// Get filename from URL
 	$filename = basename(parse_url($image_url, PHP_URL_PATH));
 
-	// Remove WP dimension suffix (-768x245 etc.)
+	// Remove WordPress scaled suffix.
+	$filename = preg_replace('/-scaled(?=\.(jpg|jpeg|png|gif|webp)$)/i', '', $filename);
+
+	// Remove WordPress dimension suffix.
 	$filename = preg_replace('/-\d+x\d+(?=\.(jpg|jpeg|png|gif|webp)$)/i', '', $filename);
 
-	// Search uploads for matching file
+	$filename_base = pathinfo($filename, PATHINFO_FILENAME);
+	$webp_filename = $filename_base . '.webp';
+
+	// Try exact WebP filename first.
 	$attachment_id = $wpdb->get_var($wpdb->prepare("
 		SELECT ID
 		FROM {$wpdb->posts}
 		WHERE post_type = 'attachment'
-		AND guid LIKE %s
+		AND LOWER(SUBSTRING_INDEX(guid, '/', -1)) = LOWER(%s)
 		LIMIT 1
-	", '%' . $wpdb->esc_like($filename)));
+	", $webp_filename));
+
+	if($attachment_id) {
+		return [
+			'id' => intval($attachment_id),
+			'filename' => $webp_filename
+		];
+	}
+
+	// Fall back to exact original filename.
+	$attachment_id = $wpdb->get_var($wpdb->prepare("
+		SELECT ID
+		FROM {$wpdb->posts}
+		WHERE post_type = 'attachment'
+		AND LOWER(SUBSTRING_INDEX(guid, '/', -1)) = LOWER(%s)
+		LIMIT 1
+	", $filename));
 
 	return [
 		'id' => $attachment_id ? intval($attachment_id) : false,
-		'filename' => $clean_filename
+		'filename' => $attachment_id ? $filename : ''
 	];
 }
